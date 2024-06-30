@@ -91,7 +91,7 @@ Items added:
 - Moon (2009)
 - Coherence (2013)
 ...
-
+```
 ## Notes
 - Ensure your items.txt file is correctly formatted with each media item on a new line.
 - The script handles both movies and TV shows, prompting you to specify the type for correct API usage.
