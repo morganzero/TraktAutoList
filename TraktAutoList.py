@@ -2,8 +2,11 @@ import os
 import json
 import requests
 import time
+from urllib.parse import quote
+from InquirerPy import prompt
 
 CONFIG_FILE = 'config.json'
+CACHE_FILE = 'search_cache.json'
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -15,78 +18,104 @@ def save_config(config):
     with open(CONFIG_FILE, 'w') as file:
         json.dump(config, file, indent=4)
 
+def load_cache():
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, 'r') as file:
+            return json.load(file)
+    return {}
+
+def save_cache(cache):
+    with open(CACHE_FILE, 'w') as file:
+        json.dump(cache, file, indent=4)
+
 def get_user_input():
     config = load_config()
 
     if 'client_id' not in config:
-        config['client_id'] = input("Enter your Trakt Client ID: ")
+        config['client_id'] = prompt({"type": "input", "name": "client_id", "message": "Trakt Client ID:"})["client_id"]
     else:
         print(f"Using stored Client ID: {config['client_id']}")
 
     if 'client_secret' not in config:
-        config['client_secret'] = input("Enter your Trakt Client Secret: ")
+        config['client_secret'] = prompt({"type": "input", "name": "client_secret", "message": "Trakt Client Secret:"})["client_secret"]
     else:
         print(f"Using stored Client Secret: {config['client_secret']}")
 
+    if 'username' not in config:
+        config['username'] = prompt({"type": "input", "name": "username", "message": "Trakt Username:"})["username"]
+    else:
+        use_stored_username = prompt([{"type": "confirm", "name": "use_stored_username", "message": f"Use stored username '{config['username']}'?", "default": True}])["use_stored_username"]
+        if not use_stored_username:
+            config['username'] = prompt({"type": "input", "name": "username", "message": "Trakt Username:"})["username"]
+
     save_config(config)
-    return config['client_id'], config['client_secret']
+    return config['client_id'], config['client_secret'], config['username']
 
 def get_authorization_code(client_id, redirect_uri):
     auth_url = f"https://trakt.tv/oauth/authorize?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}"
-    print(f"Go to the following URL in your browser and authorize the application:")
-    print(auth_url)
-    auth_code = input("Enter the authorization code you received: ")
-    return auth_code
+    print(f"Authorize the app by visiting: {auth_url}")
+    return prompt({"type": "input", "name": "auth_code", "message": "Authorization Code:"})["auth_code"]
 
 def get_access_token(client_id, client_secret, redirect_uri, auth_code):
-    token_url = "https://trakt.tv/oauth/token"
-    data = {
+    response = requests.post("https://trakt.tv/oauth/token", data={
         "code": auth_code,
         "client_id": client_id,
         "client_secret": client_secret,
         "redirect_uri": redirect_uri,
         "grant_type": "authorization_code"
-    }
-    response = requests.post(token_url, data=data)
-    
+    })
     response.raise_for_status()
     return response.json()
 
 def read_media_list(file_name):
-    with open(file_name, 'r') as file:
-        items = [line.strip() for line in file.readlines()]
-    return items
+    if os.path.exists(file_name):
+        with open(file_name, 'r') as file:
+            return [line.strip() for line in file.readlines()]
+    return []
 
-def search_media(media_title, media_type, headers):
-    media_type_plural = 'movies' if media_type == 'movie' else 'shows'
-    search_url = f"https://api.trakt.tv/search/{media_type_plural}"
-    response = requests.get(search_url, params={"query": media_title}, headers=headers)
+def search_media(media_title, media_type, headers, cache):
+    if media_title in cache:
+        return cache[media_title]
+    
+    response = requests.get(f"https://api.trakt.tv/search/{media_type}?query={quote(media_title)}", headers=headers)
     response.raise_for_status()
     results = response.json()
     if results:
-        media_key = 'movie' if media_type == 'movie' else 'show'
-        return results[0][media_key]['ids']['trakt']
+        media_id = results[0][media_type]['ids']['trakt']
+        cache[media_title] = media_id
+        return media_id
     return None
+
+def get_existing_list_items(username, list_name, headers):
+    encoded_list_name = quote(list_name)
+    get_list_url = f"https://api.trakt.tv/users/{username}/lists/{encoded_list_name}/items"
+    response = requests.get(get_list_url, headers=headers)
+    if response.status_code == 404:
+        return set()  # Return an empty set if the list is not found
+    response.raise_for_status()
+    existing_items = {item['movie']['ids']['trakt'] if 'movie' in item else item['show']['ids']['trakt'] for item in response.json()}
+    return existing_items
 
 def add_media_to_list(media_ids, headers, add_to_list_url):
     payload = {
-        "movies": [{"ids": {"trakt": media_id}} for media_type, media_id in media_ids if media_type == 'movie'],
-        "shows": [{"ids": {"trakt": media_id}} for media_type, media_id in media_ids if media_type == 'show']
+        "movies": [{"ids": {"trakt": media_id}} for media_type, media_id, _ in media_ids if media_type == 'movie'],
+        "shows": [{"ids": {"trakt": media_id}} for media_type, media_id, _ in media_ids if media_type == 'show']
     }
     response = requests.post(add_to_list_url, json=payload, headers=headers)
     response.raise_for_status()
     return response.json()
 
 def create_new_list(username, headers):
-    list_name = input("Enter the name of the new list: ")
-    list_description = input("Enter the description of the new list: ")
-    list_privacy = input("Enter the privacy of the new list (private/public): ")
-    list_slug = input("Enter the slug for the new list: ")
+    answers = prompt([
+        {"type": "input", "name": "list_name", "message": "New List Name:"},
+        {"type": "input", "name": "list_description", "message": "Description:"},
+        {"type": "list", "name": "list_privacy", "message": "Privacy:", "choices": ["private", "public"]}
+    ])
     
     payload = {
-        "name": list_name,
-        "description": list_description,
-        "privacy": list_privacy,
+        "name": answers["list_name"],
+        "description": answers["list_description"],
+        "privacy": answers["list_privacy"],
         "display_numbers": False,
         "allow_comments": True,
         "sort_by": "rank",
@@ -95,26 +124,41 @@ def create_new_list(username, headers):
     
     create_list_url = f"https://api.trakt.tv/users/{username}/lists"
     response = requests.post(create_list_url, json=payload, headers=headers)
-    response.raise_for_status()
-    return list_slug
-
-def get_media_items():
-    use_existing = input("Do you want to use the items.txt file? (yes/no): ").strip().lower()
-    if use_existing == 'yes' and os.path.exists('items.txt'):
-        return read_media_list('items.txt')
+    
+    if response.status_code == 201:
+        print(f"Created list: {answers['list_name']}")
+        return answers["list_name"]
+    elif response.status_code == 420:
+        raise Exception("Received 420 Client Error from Trakt API. Please check your payload or try again later.")
     else:
-        print("Enter your media items (type 'done' when finished):")
-        items = []
-        while True:
-            item = input()
-            if item.lower() == 'done':
-                break
-            items.append(item)
-        return items
+        response.raise_for_status()
+
+def list_exists(username, list_name, headers):
+    encoded_list_name = quote(list_name)
+    check_list_url = f"https://api.trakt.tv/users/{username}/lists/{encoded_list_name}"
+    response = requests.get(check_list_url, headers=headers)
+    return response.status_code == 200
+
+def get_media_items(list_name):
+    items_file = f"{list_name}_items.txt"
+    use_existing = prompt([{"type": "confirm", "name": "use_existing", "message": f"Use the items file '{items_file}'?", "default": True}])["use_existing"]
+    if use_existing:
+        return read_media_list(items_file)
+    print("Enter your media items (type 'done' when finished):")
+    items = []
+    while True:
+        item = input()
+        if item.lower() == 'done':
+            break
+        items.append(item)
+    with open(items_file, 'w') as file:
+        file.write("\n".join(items) + "\n")
+    return items
 
 def main():
     config = load_config()
-    CLIENT_ID, CLIENT_SECRET = get_user_input()
+    cache = load_cache()
+    CLIENT_ID, CLIENT_SECRET, USERNAME = get_user_input()
     REDIRECT_URI = 'urn:ietf:wg:oauth:2.0:oob'
 
     if 'access_token' in config:
@@ -134,58 +178,84 @@ def main():
         "trakt-api-key": CLIENT_ID,
     }
 
-    print("1: Create new list")
-    print("2: Update existing list")
-    choice = input("Choose an option (1 or 2): ").strip()
+    choice = prompt([{
+        "type": "list",
+        "name": "menu_choice",
+        "message": "Select an option:",
+        "choices": [
+            {"name": "Create new list", "value": "create"},
+            {"name": "Update existing list", "value": "update"}
+        ]
+    }])["menu_choice"]
 
-    if choice == '1':
-        USERNAME = input("Enter your Trakt Username: ")
-        LIST_SLUG = create_new_list(USERNAME, HEADERS)
-        config['username'] = USERNAME
-        config['list_slug'] = LIST_SLUG
+    if choice == "create":
+        LIST_NAME = create_new_list(USERNAME, HEADERS)
+        config['list_name'] = LIST_NAME
         save_config(config)
-    elif choice == '2':
-        use_stored = input("Do you want to update the list with values stored in config.json? (yes/no): ").strip().lower()
-        if use_stored == 'yes':
-            if 'username' in config and 'list_slug' in config:
-                USERNAME = config['username']
-                LIST_SLUG = config['list_slug']
+    elif choice == "update":
+        if 'list_name' in config:
+            print(f"Stored list: {config['list_name']}")
+            use_stored = prompt([{"type": "confirm", "name": "use_stored", "message": "Use this list?", "default": True}])["use_stored"]
+            if use_stored:
+                LIST_NAME = config['list_name']
             else:
-                print("No stored values found. Please enter details.")
-                USERNAME = input("Enter your Trakt Username: ")
-                LIST_SLUG = input("Enter the slug of your Trakt list: ")
-                config['username'] = USERNAME
-                config['list_slug'] = LIST_SLUG
+                LIST_NAME = prompt([{"type": "input", "name": "list_name", "message": "Trakt List Name:"}])["list_name"]
+                config['list_name'] = LIST_NAME
                 save_config(config)
         else:
-            USERNAME = input("Enter your Trakt Username: ")
-            LIST_SLUG = input("Enter the slug of your Trakt list: ")
+            LIST_NAME = prompt([{"type": "input", "name": "list_name", "message": "Trakt List Name:"}])["list_name"]
+            config['list_name'] = LIST_NAME
+            save_config(config)
 
-    media_items = get_media_items()
-    media_type = input("Are these items Movies or TV Shows? (movie/tv): ").strip().lower()
+        if not list_exists(USERNAME, LIST_NAME, HEADERS):
+            print(f"List '{LIST_NAME}' does not exist. Creating it.")
+            LIST_NAME = create_new_list(USERNAME, HEADERS)
+            config['list_name'] = LIST_NAME
+            save_config(config)
 
-    ADD_TO_LIST_URL = f"https://api.trakt.tv/users/{USERNAME}/lists/{LIST_SLUG}/items"
+    media_items = get_media_items(LIST_NAME)
+    media_type = prompt([{"type": "list", "name": "media_type", "message": "Items are:", "choices": ["movie", "tv"]}])["media_type"]
+
+    LIST_SLUG = LIST_NAME.lower().replace(" ", "-")
+    ADD_TO_LIST_URL = f"https://api.trakt.tv/users/{USERNAME}/lists/{quote(LIST_SLUG)}/items"
+    print(f"Using URL for adding items: {ADD_TO_LIST_URL}")  # Debug statement
+
+    existing_items = get_existing_list_items(USERNAME, LIST_SLUG, HEADERS)
+    print(f"Existing items in the list: {existing_items}")  # Debug statement
 
     media_ids = []
+    not_found = []
     for item in media_items:
         media_title = item.strip()
-
-        print(f"Searching for {media_type}: {media_title}")
-        media_id = search_media(media_title, media_type, HEADERS)
+        print(f"Searching for {media_type}: {media_title}")  # Debug statement
+        media_id = search_media(media_title, media_type, HEADERS, cache)
         if media_id:
-            media_ids.append((media_type, media_id))
-            print(f"Found {media_type} ID: {media_id}")
+            if media_id not in existing_items:
+                media_ids.append((media_type, media_id, media_title))
+            else:
+                print(f"{media_type} already in list: {media_title}")
         else:
+            not_found.append(media_title)
             print(f"{media_type} not found: {media_title}")
 
-    # Adding media in batches to avoid rate limiting
-    batch_size = 10
-    for i in range(0, len(media_ids), batch_size):
-        batch = media_ids[i:i+batch_size]
-        print(f"Adding batch: {batch}")
+    save_cache(cache)  # Save the cache after all searches
+
+    for i in range(0, len(media_ids), 10):
+        batch = media_ids[i:i+10]
+        print(f"Adding batch: {batch}")  # Debug statement
         result = add_media_to_list(batch, HEADERS, ADD_TO_LIST_URL)
-        print(f"Result: {result}")
-        time.sleep(5)  # Adding delay to avoid rate limiting
+        print(f"Result: {result}")  # Debug statement
+        time.sleep(5)
+
+    print("\nSummary:")
+    print("Items added:")
+    for _, _, title in media_ids:
+        print(f"- {title}")
+
+    if not_found:
+        print("\nItems not found:")
+        for title in not_found:
+            print(f"- {title}")
 
 if __name__ == "__main__":
     main()
