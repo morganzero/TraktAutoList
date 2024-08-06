@@ -151,7 +151,8 @@ def create_new_list(username, headers):
 
 def list_exists(username, list_name, headers):
     encoded_list_name = quote(list_name.lower().replace(" ", "-"))
-    check_list_url = f"https://api.trakt.tv/users/{username}/lists/{encoded_list_name}"    response = requests.get(check_list_url, headers=headers)
+    check_list_url = f"https://api.trakt.tv/users/{username}/lists/{encoded_list_name}"
+    response = requests.get(check_list_url, headers=headers)
     return response.status_code == 200
 
 def get_media_items(list_name):
