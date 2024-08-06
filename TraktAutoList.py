@@ -185,8 +185,8 @@ def construct_list_slug(list_name):
     slug = list_name.lower().replace("&", "").replace(" ", "-")
     while "--" in slug:
         slug = slug.replace("--", "-")
-    if slug.endswith("-"):
-        slug = slug[:-1]
+    slug = slug.strip("-")
+    slug = slug.replace("\n", "").replace("\r", "")
     return slug
 
 def main():
