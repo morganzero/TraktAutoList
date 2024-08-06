@@ -113,11 +113,16 @@ def add_media_to_list(media_ids, headers, add_to_list_url):
     }
 
     print(f"Payload: {payload}")  # Debug statement
+    print(f"Adding to URL: {add_to_list_url}")  # Debug statement
 
     response = requests.post(add_to_list_url, json=payload, headers=headers)
     print(f"Response Status Code: {response.status_code}")  # Debug statement
     print(f"Response Content: {response.content}")  # Debug statement
-    
+
+    if response.status_code == 404:
+        print(f"Error: The list or URL '{add_to_list_url}' could not be found.")
+        return
+
     response.raise_for_status()
     return response.json()
 
