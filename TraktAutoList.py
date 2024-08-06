@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import os
 import json
 import requests
@@ -56,7 +54,7 @@ def get_user_input():
     return config
 
 def get_authorization_code(client_id, redirect_uri):
-    auth_url = f"https://trakt.tv/oauth/authorize?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}"
+    auth_url = f"https://trakt.tv/oauth/authorize?response_type=code&client_id={client_id}&redirect_uri={quote(redirect_uri)}"
     print(f"Authorize the app by visiting: {auth_url}")
     return prompt({"type": "input", "name": "auth_code", "message": "Authorization Code:"})["auth_code"]
 
@@ -181,6 +179,10 @@ def get_user_lists(username, headers):
     response.raise_for_status()
     return response.json()
 
+def construct_list_slug(list_name):
+    # Replace spaces with hyphens and remove any URL-encoded ampersands
+    return list_name.lower().replace(" ", "-").replace("%26", "-")
+
 def main():
     config = get_user_input()
     cache = load_cache()
@@ -249,7 +251,7 @@ def main():
         media_items = get_media_items(LIST_NAME)
         media_type = prompt([{"type": "list", "name": "media_type", "message": "Items are:", "choices": ["movie", "tv"]}])["media_type"]
 
-        LIST_SLUG = LIST_NAME.lower().replace(" ", "-")
+        LIST_SLUG = construct_list_slug(LIST_NAME)
         ADD_TO_LIST_URL = f"https://api.trakt.tv/users/{USERNAME}/lists/{quote(LIST_SLUG)}/items"
         print(f"Using URL for adding items: {ADD_TO_LIST_URL}")  # Debug statement
 
