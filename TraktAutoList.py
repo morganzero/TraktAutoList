@@ -87,7 +87,8 @@ def search_media(media_title, media_type, headers, cache):
         return cache[media_title]
 
     search_url = f"https://api.trakt.tv/search/{'show' if media_type == 'tv' else 'movie'}"
-    response = requests.get(search_url, params={"query": media_title}, headers=headers)    response.raise_for_status()
+    response = requests.get(search_url, params={"query": media_title}, headers=headers)
+    response.raise_for_status()
     results = response.json()
     if results:
         media_id = results[0]['show' if media_type == 'tv' else 'movie']['ids']['trakt']
