@@ -182,8 +182,12 @@ def get_user_lists(username, headers):
     return response.json()
 
 def construct_list_slug(list_name):
-    # Replace spaces with hyphens and remove any URL-encoded ampersands
-    return list_name.lower().replace(" ", "-").replace("%26", "-")
+    slug = list_name.lower().replace("&", "").replace(" ", "-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    if slug.endswith("-"):
+        slug = slug[:-1]
+    return slug
 
 def main():
     config = get_user_input()
